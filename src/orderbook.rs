@@ -29,13 +29,23 @@ impl PriceLevel {
     }
 }
 
+type BookSideType = BTreeMap<Price, PriceLevel>;
+
+#[derive(Debug)]
 pub struct OrderBook {
-    pub bids: BTreeMap<Price, PriceLevel>,
-    pub asks: BTreeMap<Price, PriceLevel>,
+    pub bids: BookSideType,
+    pub asks: BookSideType,
     pub orders: Slab<OrderNode>, // General Storage for order nodes
     pub index_map: HashMap<OrderId, IndexMapEntry>, // Reverse lookup Order Id, for fast cancels
 }
 
+impl Default for OrderBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
 pub struct IndexMapEntry {
     pub order_index: usize,
     pub price: Price,
@@ -103,19 +113,19 @@ impl OrderBook {
         Ok(())
     }
 
-    fn next_bid(bids: &BTreeMap<Price, PriceLevel>) -> Option<(Price, PriceLevel)> {
-        bids.first_key_value().map(|(k, v)| (k.clone(), v.clone()))
+    fn next_bid(bids: &BookSideType) -> Option<(Price, PriceLevel)> {
+        bids.first_key_value().map(|(k, v)| (*k, v.clone()))
     }
 
-    fn next_ask(asks: &BTreeMap<Price, PriceLevel>) -> Option<(Price, PriceLevel)> {
-        asks.last_key_value().map(|(k, v)| (k.clone(), v.clone()))
+    fn next_ask(asks: &BookSideType) -> Option<(Price, PriceLevel)> {
+        asks.last_key_value().map(|(k, v)| (*k, v.clone()))
     }
 
-    fn next_bid_mut(bids: &mut BTreeMap<Price, PriceLevel>) -> Option<&mut PriceLevel> {
+    fn next_bid_mut(bids: &mut BookSideType) -> Option<&mut PriceLevel> {
         bids.values_mut().last()
     }
 
-    fn next_ask_mut(asks: &mut BTreeMap<Price, PriceLevel>) -> Option<&mut PriceLevel> {
+    fn next_ask_mut(asks: &mut BookSideType) -> Option<&mut PriceLevel> {
         asks.values_mut().next()
     }
 
@@ -124,25 +134,39 @@ impl OrderBook {
         side: Side,
         mut quantity: Quantity,
     ) -> Result<Vec<Fill>, MarketOrderError> {
-        let mut fills = Vec::new();
+        struct MarketOrderHelper<'a> {
+            book: &'a mut BookSideType,
+            next_fn: fn(&BookSideType) -> Option<(Price, PriceLevel)>,
+            next_mut_fn: fn(&mut BookSideType) -> Option<&mut PriceLevel>,
+        }
 
-        let (book, next, next_mut): (
-            &mut BTreeMap<Price, PriceLevel>,
-            fn(&BTreeMap<Price, PriceLevel>) -> Option<(Price, PriceLevel)>,
-            fn(&mut BTreeMap<Price, PriceLevel>) -> Option<&mut PriceLevel>,
-        ) = match side {
+        let MarketOrderHelper {
+            book,
+            next_fn,
+            next_mut_fn,
+        } = match side {
             Side::Bid => {
                 let book = &mut self.asks;
-                (book, Self::next_bid, Self::next_bid_mut)
+                MarketOrderHelper {
+                    book,
+                    next_fn: Self::next_bid,
+                    next_mut_fn: Self::next_bid_mut,
+                }
             }
             Side::Ask => {
                 let book = &mut self.bids;
-                (book, Self::next_ask, Self::next_ask_mut)
+                MarketOrderHelper {
+                    book,
+                    next_fn: Self::next_ask,
+                    next_mut_fn: Self::next_ask_mut,
+                }
             }
         };
 
+        let mut fills = Vec::new();
+
         while quantity > 0 {
-            let Some((price, mut top_level)) = next(book) else {
+            let Some((price, mut top_level)) = next_fn(book) else {
                 break; // No more levels left in book
             };
 
@@ -162,7 +186,7 @@ impl OrderBook {
                     self.orders.remove(top_level.head);
                     if let Some(next) = node.next {
                         // We need to update the pointer to the "next" order
-                        let Some(top_level_ref) = next_mut(book) else {
+                        let Some(top_level_ref) = next_mut_fn(book) else {
                             return Err(MarketOrderError::InternalError);
                         };
                         if let Some(next_order) = self.orders.get_mut(next) {
@@ -182,10 +206,7 @@ impl OrderBook {
                     };
 
                     // Push remaining quantity
-                    fills.push(Fill {
-                        price,
-                        quantity: quantity,
-                    });
+                    fills.push(Fill { price, quantity });
                     top_order_ref.quantity -= quantity;
                     quantity = 0;
                     break;
