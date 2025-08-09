@@ -23,8 +23,8 @@ pub struct Order {
 }
 
 pub struct PriceLevel {
-    pub head: Option<usize>,
-    pub tail: Option<usize>,
+    pub head: usize,
+    pub tail: usize,
     pub total_quantity: Quantity,
     pub order_count: usize,
 }
@@ -81,13 +81,13 @@ impl OrderBook {
         if let Some(prev_node) = prev_index.and_then(|prev| self.orders.get_mut(prev)) {
             prev_node.next = next_index;
         } else {
-            price_level.head = next_index;
+            price_level.head = next_index.unwrap_or_default();
         }
 
         if let Some(next_node) = next_index.and_then(|next| self.orders.get_mut(next)) {
             next_node.previous = prev_index;
         } else {
-            price_level.tail = prev_index;
+            price_level.tail = prev_index.unwrap_or_default();
         }
 
         // Update meta-level things
@@ -108,21 +108,41 @@ impl OrderBook {
         &mut self,
         market_order_id: OrderId,
         side: Side,
-        quantity: Quantity,
+        mut quantity: Quantity,
     ) -> Vec<Fill> {
-        // Determine side to match
+        let mut fills = Vec::new();
+
+        let book = match side {
+            Side::Bid => &mut self.asks, // market buy -> match against asks
+            Side::Ask => &mut self.bids, // market sell -> match against bids
+        };
+
+        let level_match = |(price, level): (&Price, &mut PriceLevel)| {
+            // TODO:
+        };
+
         match side {
             Side::Bid => {
-                // market buy -> match against asks
-                let iter = self.asks.iter_mut();
-                execute_market_order_with_iter(market_order_id, quantity, iter)
+                for item in self.asks.iter_mut() {
+                    if quantity == 0 {
+                        break;
+                    }
+
+                    level_match(item)
+                }
             }
             Side::Ask => {
-                // market sell -> match against bids
-                let iter = self.bids.iter_mut().rev();
-                execute_market_order_with_iter(market_order_id, quantity, iter)
+                for item in self.bids.iter_mut().rev() {
+                    if quantity == 0 {
+                        break;
+                    }
+
+                    level_match(item)
+                }
             }
         }
+
+        fills
     }
 
     pub fn execute_limit_order(
@@ -138,20 +158,24 @@ impl OrderBook {
 // TODO:
 pub struct Fill;
 
-// TODO:
-fn execute_market_order_with_iter<'a, I>(
-    market_order_id: OrderId,
-    mut remaining_qty: Quantity,
-    book_iter: I,
-) -> Vec<Fill>
-where
-    I: Iterator<Item = (&'a Price, &'a mut PriceLevel)>,
-{
-    let mut fills = Vec::new();
+struct PriceLevelIterMut<'a> {
+    memory: &'a mut Slab<OrderNode>,
+    index: Option<usize>,
+}
 
-    for (price, level) in book_iter {
-        // matching logic here
+impl<'a> Iterator for PriceLevelIterMut<'a> {
+    type Item = &'a mut OrderNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
     }
+}
 
-    fills
+impl<'a> PriceLevelIterMut<'a> {
+    pub fn new(memory: &'a mut Slab<OrderNode>, price_level: &PriceLevel) -> Self {
+        Self {
+            memory,
+            index: Some(price_level.head),
+        }
+    }
 }
