@@ -117,30 +117,41 @@ impl OrderBook {
             Side::Ask => &mut self.bids, // market sell -> match against bids
         };
 
-        let level_match = |(price, level): (&Price, &mut PriceLevel)| {
-            // TODO:
+        let mut level_match = |mut remaining_quantity: Quantity, (price, level): (&Price, &mut PriceLevel)| -> Quantity {
+            // Order will fully consume this level
+            if remaining_quantity >= level.total_quantity {
+                remaining_quantity -= level.total_quantity;
+
+                let mut iter = PriceLevelIter::new(level);
+                while let Some((index, node)) = iter.next(&mut self.orders) {
+                    self.index_map.remove(&node.order_id);
+                    self.orders.remove(index);
+                }
+            }
+
+            remaining_quantity
         };
 
-        match side {
-            Side::Bid => {
-                for item in self.asks.iter_mut() {
-                    if quantity == 0 {
-                        break;
-                    }
+        // match side {
+        //     Side::Bid => {
+        //         for item in self.asks.iter_mut() {
+        //             if quantity == 0 {
+        //                 break;
+        //             }
 
-                    level_match(item)
-                }
-            }
-            Side::Ask => {
-                for item in self.bids.iter_mut().rev() {
-                    if quantity == 0 {
-                        break;
-                    }
+        //             quantity = level_match(quantity, item);
+        //         }
+        //     }
+        //     Side::Ask => {
+        //         for item in self.bids.iter_mut().rev() {
+        //             if quantity == 0 {
+        //                 break;
+        //             }
 
-                    level_match(item)
-                }
-            }
-        }
+        //             quantity = level_match(quantity, item);
+        //         }
+        //     }
+        // }
 
         fills
     }
@@ -158,24 +169,22 @@ impl OrderBook {
 // TODO:
 pub struct Fill;
 
-struct PriceLevelIterMut<'a> {
-    memory: &'a mut Slab<OrderNode>,
+struct PriceLevelIter {
     index: Option<usize>,
 }
 
-impl<'a> Iterator for PriceLevelIterMut<'a> {
-    type Item = &'a mut OrderNode;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+impl PriceLevelIter {
+    pub fn new(price_level: &PriceLevel) -> Self {
+        Self { index: Some(price_level.head) }
     }
-}
 
-impl<'a> PriceLevelIterMut<'a> {
-    pub fn new(memory: &'a mut Slab<OrderNode>, price_level: &PriceLevel) -> Self {
-        Self {
-            memory,
-            index: Some(price_level.head),
+    pub fn next<'a>(&'a mut self, memory: &'a mut Slab<OrderNode>) -> Option<(usize, &'a mut OrderNode)> {
+        if let Some((index, node)) = self.index.and_then(|i| memory.get_mut(i).map(|n| (i, n))) {
+            let current_index = index;
+            self.index = node.next;
+            Some((current_index, node))
+        } else {
+            None
         }
     }
 }
