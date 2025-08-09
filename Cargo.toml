@@ -9,3 +9,7 @@ hashbrown = "0.15.5"
 
 [dev-dependencies]
 criterion = "0.7.0"
+
+[[bench]]
+name = "orderbook"
+harness = false

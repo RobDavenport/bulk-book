@@ -1,6 +1,7 @@
 pub type Price = i64;
 pub type Quantity = u64;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
     Bid,
     Ask,
