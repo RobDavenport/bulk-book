@@ -1,0 +1,8 @@
+[package]
+name = "bulk-book"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slab = "0.4.11"
+hashbrown = "0.15.5"
