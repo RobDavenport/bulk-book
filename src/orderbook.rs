@@ -4,10 +4,11 @@ use hashbrown::HashMap;
 use slab::Slab;
 
 use crate::{
-    error::CancelOrderError,
+    error::{CancelOrderError, LimitOrderError, MarketOrderError},
     types::{OrderId, Price, Quantity, Side},
 };
 
+#[derive(Clone)]
 pub struct OrderNode {
     pub quantity: Quantity,
     pub order_id: OrderId,
@@ -15,18 +16,17 @@ pub struct OrderNode {
     pub next: Option<usize>,
 }
 
-pub struct Order {
-    pub id: OrderId,
-    pub side: Side,
-    pub remaining: Quantity,
-    pub timestamp: u128,
-}
-
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PriceLevel {
     pub head: usize,
     pub tail: usize,
-    pub total_quantity: Quantity,
     pub order_count: usize,
+}
+
+impl PriceLevel {
+    pub fn head_mut<'a>(&self, memory: &'a mut Slab<OrderNode>) -> Option<&'a mut OrderNode> {
+        memory.get_mut(self.head)
+    }
 }
 
 pub struct OrderBook {
@@ -91,7 +91,6 @@ impl OrderBook {
         }
 
         // Update meta-level things
-        price_level.total_quantity -= quantity;
         price_level.order_count -= 1;
 
         // Cleanup removed levels & order
@@ -104,87 +103,281 @@ impl OrderBook {
         Ok(())
     }
 
+    fn next_bid(bids: &BTreeMap<Price, PriceLevel>) -> Option<(Price, PriceLevel)> {
+        bids.first_key_value().map(|(k, v)| (k.clone(), v.clone()))
+    }
+
+    fn next_ask(asks: &BTreeMap<Price, PriceLevel>) -> Option<(Price, PriceLevel)> {
+        asks.last_key_value().map(|(k, v)| (k.clone(), v.clone()))
+    }
+
+    fn next_bid_mut(bids: &mut BTreeMap<Price, PriceLevel>) -> Option<&mut PriceLevel> {
+        bids.values_mut().last()
+    }
+
+    fn next_ask_mut(asks: &mut BTreeMap<Price, PriceLevel>) -> Option<&mut PriceLevel> {
+        asks.values_mut().next()
+    }
+
     pub fn execute_market_order(
         &mut self,
         market_order_id: OrderId,
         side: Side,
         mut quantity: Quantity,
-    ) -> Vec<Fill> {
+    ) -> Result<Vec<Fill>, MarketOrderError> {
         let mut fills = Vec::new();
 
-        let book = match side {
-            Side::Bid => &mut self.asks, // market buy -> match against asks
-            Side::Ask => &mut self.bids, // market sell -> match against bids
+        let (book, next, next_mut): (
+            &mut BTreeMap<Price, PriceLevel>,
+            fn(&BTreeMap<Price, PriceLevel>) -> Option<(Price, PriceLevel)>,
+            fn(&mut BTreeMap<Price, PriceLevel>) -> Option<&mut PriceLevel>,
+        ) = match side {
+            Side::Bid => {
+                let book = &mut self.asks;
+                (book, Self::next_bid, Self::next_bid_mut)
+            }
+            Side::Ask => {
+                let book = &mut self.bids;
+                (book, Self::next_ask, Self::next_ask_mut)
+            }
         };
 
-        let mut level_match = |mut remaining_quantity: Quantity, (price, level): (&Price, &mut PriceLevel)| -> Quantity {
-            // Order will fully consume this level
-            if remaining_quantity >= level.total_quantity {
-                remaining_quantity -= level.total_quantity;
+        while quantity > 0 {
+            let Some((price, mut top_level)) = next(book) else {
+                break; // No more levels left in book
+            };
 
-                let mut iter = PriceLevelIter::new(level);
-                while let Some((index, node)) = iter.next(&mut self.orders) {
+            while let Some(node) = self.orders.get(top_level.head).cloned() {
+                // This order will be fully consumed
+                if quantity >= node.quantity {
+                    fills.push(Fill {
+                        price,
+                        quantity: node.quantity,
+                    });
+                    quantity -= node.quantity;
+
+                    // Remove the resting order from id lookup
                     self.index_map.remove(&node.order_id);
-                    self.orders.remove(index);
+
+                    // Remove the resting order from the price level
+                    self.orders.remove(top_level.head);
+                    if let Some(next) = node.next {
+                        // We need to update the pointer to the "next" order
+                        let Some(top_level_ref) = next_mut(book) else {
+                            return Err(MarketOrderError::InternalError);
+                        };
+                        top_level.head = next;
+                        top_level_ref.head = next;
+                    } else {
+                        // No orders remain, just delete this level entirely
+                        book.remove(&price);
+                        break;
+                    }
+                } else {
+                    // This resting order will be partially consumed
+                    let Some(top_order_ref) = self.orders.get_mut(top_level.head) else {
+                        return Err(MarketOrderError::InternalError);
+                    };
+
+                    // Push remaining quantity
+                    fills.push(Fill {
+                        price,
+                        quantity: quantity,
+                    });
+                    top_order_ref.quantity -= quantity;
+                    quantity = 0;
                 }
             }
+        }
 
-            remaining_quantity
-        };
-
-        // match side {
-        //     Side::Bid => {
-        //         for item in self.asks.iter_mut() {
-        //             if quantity == 0 {
-        //                 break;
-        //             }
-
-        //             quantity = level_match(quantity, item);
-        //         }
-        //     }
-        //     Side::Ask => {
-        //         for item in self.bids.iter_mut().rev() {
-        //             if quantity == 0 {
-        //                 break;
-        //             }
-
-        //             quantity = level_match(quantity, item);
-        //         }
-        //     }
-        // }
-
-        fills
+        Ok(fills)
     }
 
     pub fn execute_limit_order(
         &mut self,
-        limit_order_id: OrderId,
+        side: Side,
+        order_id: OrderId,
         price: Price,
         quantity: Quantity,
-    ) {
-        //TODO:
-    }
-}
-
-// TODO:
-pub struct Fill;
-
-struct PriceLevelIter {
-    index: Option<usize>,
-}
-
-impl PriceLevelIter {
-    pub fn new(price_level: &PriceLevel) -> Self {
-        Self { index: Some(price_level.head) }
-    }
-
-    pub fn next<'a>(&'a mut self, memory: &'a mut Slab<OrderNode>) -> Option<(usize, &'a mut OrderNode)> {
-        if let Some((index, node)) = self.index.and_then(|i| memory.get_mut(i).map(|n| (i, n))) {
-            let current_index = index;
-            self.index = node.next;
-            Some((current_index, node))
-        } else {
-            None
+    ) -> Result<(), LimitOrderError> {
+        if self.index_map.get(&order_id).is_some() {
+            return Err(LimitOrderError::OrderIdAlreadyExists);
         }
+
+        let book = match side {
+            Side::Bid => &mut self.bids,
+            Side::Ask => &mut self.asks,
+        };
+
+        // Insert into memory
+        let index = self.orders.insert(OrderNode {
+            quantity,
+            order_id,
+            previous: None,
+            next: None,
+        });
+
+        if let Some(level) = book.get_mut(&price) {
+            // Link new order to previous tail
+            let old_tail = level.tail;
+
+            let Some(next) = self.orders.get_mut(old_tail) else {
+                return Err(LimitOrderError::InternalError);
+            };
+            next.next = Some(index);
+
+            let Some(previous) = self.orders.get_mut(index) else {
+                return Err(LimitOrderError::InternalError);
+            };
+            previous.previous = Some(old_tail);
+
+            // Update tail & order count
+            level.tail = index;
+            level.order_count += 1;
+        } else {
+            book.insert(
+                price,
+                PriceLevel {
+                    head: index,
+                    tail: index,
+                    order_count: 1,
+                },
+            );
+        }
+
+        // Update the cancel map
+        self.index_map.insert(
+            order_id,
+            IndexMapEntry {
+                order_index: index,
+                price,
+                side,
+            },
+        );
+
+        Ok(())
+    }
+}
+
+pub struct Fill {
+    price: Price,
+    quantity: Quantity,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::LimitOrderError,
+        orderbook::{OrderBook, PriceLevel},
+        types::{OrderId, Side},
+    };
+
+    #[test]
+    fn test_place_limit_bids() {
+        let mut book = OrderBook::new();
+
+        book.execute_limit_order(Side::Bid, OrderId(123), 100, 100)
+            .unwrap();
+        assert!(book.asks.is_empty());
+        assert_eq!(book.bids.len(), 1);
+
+        let order_index = book.index_map.get(&OrderId(123)).unwrap().order_index;
+        assert_eq!(
+            *book.bids.get(&100).unwrap(),
+            PriceLevel {
+                head: order_index,
+                tail: order_index,
+                order_count: 1
+            }
+        )
+    }
+
+    #[test]
+    fn test_place_limit_asks() {
+        let mut book = OrderBook::new();
+
+        book.execute_limit_order(Side::Ask, OrderId(123), 100, 100)
+            .unwrap();
+        assert!(book.bids.is_empty());
+        assert_eq!(book.asks.len(), 1);
+
+        let order_index = book.index_map.get(&OrderId(123)).unwrap().order_index;
+        assert_eq!(
+            *book.asks.get(&100).unwrap(),
+            PriceLevel {
+                head: order_index,
+                tail: order_index,
+                order_count: 1
+            }
+        )
+    }
+
+    #[test]
+    fn test_duplicate_order_id_errors() {
+        let mut book = OrderBook::new();
+
+        book.execute_limit_order(Side::Bid, OrderId(123), 100, 100)
+            .unwrap();
+        let duplicate = book.execute_limit_order(Side::Bid, OrderId(123), 222, 333);
+        assert_eq!(duplicate, Err(LimitOrderError::OrderIdAlreadyExists));
+
+        book.execute_limit_order(Side::Ask, OrderId(321), 100, 100)
+            .unwrap();
+        let duplicate = book.execute_limit_order(Side::Ask, OrderId(321), 222, 333);
+        assert_eq!(duplicate, Err(LimitOrderError::OrderIdAlreadyExists));
+    }
+
+    #[test]
+    fn test_place_multiple_limit_bids_same_price() {
+        let mut book = OrderBook::new();
+
+        book.execute_limit_order(Side::Bid, OrderId(1), 100, 100)
+            .unwrap();
+        book.execute_limit_order(Side::Bid, OrderId(2), 100, 200)
+            .unwrap();
+        book.execute_limit_order(Side::Bid, OrderId(3), 100, 300)
+            .unwrap();
+        assert!(book.asks.is_empty());
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids.get(&100).unwrap().order_count, 3);
+
+        let first = book.index_map.get(&OrderId(1)).unwrap().order_index;
+        let third = book.index_map.get(&OrderId(3)).unwrap().order_index;
+
+        assert_eq!(
+            *book.bids.get(&100).unwrap(),
+            PriceLevel {
+                head: first,
+                tail: third,
+                order_count: 3
+            }
+        )
+    }
+
+    #[test]
+    fn test_place_multiple_limit_asks_same_price() {
+        let mut book = OrderBook::new();
+
+        book.execute_limit_order(Side::Ask, OrderId(1), 100, 100)
+            .unwrap();
+        book.execute_limit_order(Side::Ask, OrderId(2), 100, 200)
+            .unwrap();
+        book.execute_limit_order(Side::Ask, OrderId(3), 100, 300)
+            .unwrap();
+        assert!(book.bids.is_empty());
+        assert_eq!(book.asks.len(), 1);
+        assert_eq!(book.asks.get(&100).unwrap().order_count, 3);
+
+        let first = book.index_map.get(&OrderId(1)).unwrap().order_index;
+        let third = book.index_map.get(&OrderId(3)).unwrap().order_index;
+
+        assert_eq!(
+            *book.asks.get(&100).unwrap(),
+            PriceLevel {
+                head: first,
+                tail: third,
+                order_count: 3
+            }
+        )
     }
 }

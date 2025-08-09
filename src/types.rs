@@ -7,7 +7,7 @@ pub enum Side {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OrderId(u64);
+pub struct OrderId(pub u64);
 
 pub enum OrderType {
     Limit { price: Price },
