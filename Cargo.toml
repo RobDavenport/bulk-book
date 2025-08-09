@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 slab = "0.4.11"
 hashbrown = "0.15.5"
+
+[dev-dependencies]
+criterion = "0.7.0"
