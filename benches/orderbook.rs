@@ -92,12 +92,12 @@ fn bench_market_execution(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("match_1000_orders_spread", |b| {
+    group.bench_function("match_10_000_orders_spread", |b| {
         let mut initial_book = OrderBook::new();
-        gen_orders_spread(&mut initial_book, Side::Ask, 0, 1000, 95, 110);
+        gen_orders_spread(&mut initial_book, Side::Ask, 0, 10_000, 95, 110);
         b.iter(|| {
             let mut book = initial_book.clone();
-            let fills = book.execute_market_order(Side::Bid, 1000).unwrap();
+            let fills = book.execute_market_order(Side::Bid, 10_000).unwrap();
             black_box(&fills);
         });
     });

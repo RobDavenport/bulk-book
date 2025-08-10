@@ -23,12 +23,6 @@ pub struct PriceLevel {
     pub order_count: usize,
 }
 
-impl PriceLevel {
-    pub fn head_mut<'a>(&self, memory: &'a mut Slab<OrderNode>) -> Option<&'a mut OrderNode> {
-        memory.get_mut(self.head)
-    }
-}
-
 type BookSideType = BTreeMap<Price, PriceLevel>;
 
 #[derive(Debug, Clone)]
