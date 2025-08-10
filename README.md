@@ -18,14 +18,14 @@ Run benchmarks via:
 
 # Design Overview
 
-The core of the matching engine is two primary data structures. A linked-list for storing individual orders, and two BTree maps to store price levels. The linked-list is simulated using `slab` for efficient index-based storage instead of messing with raw pointers.
+The core of the matching engine is two primary data structures. A linked-list for storing individual orders, and two BTree maps to store price levels, one each for bids and asks. The linked-list is simulated using `slab` for efficient index-based storage instead of messing with raw pointers.
 
 In general, I think this approach has a great middle ground for various of market temperaments:
 1. Slow, thick markets (Eurodollar Futures, Blue Chip Crypto) have very few price levels with many orders at the same level.
 2. Fast, thin markets (Energy Futures, Altcoin Crypto) have many price levels with few orders at each level.
 3. Standard markets which sit somewhere inbetween.
 
-The linked-list approach for individual orders was chosen for a few reasons:
+The linked-list approach for individual price levels was chosen for a few reasons:
 - Easy appending to the end of the list when new orders are added
 - Fast cancellation of orders at the front (or anywhere else) in the queue
 - An extra OrderId based lookup map exists to reduce the need iterate through each price level to find the matching Ids. 
