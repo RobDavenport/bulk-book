@@ -83,18 +83,22 @@ fn bench_market_execution(c: &mut Criterion) {
     let mut group = c.benchmark_group("market_execution");
 
     group.bench_function("match_100_orders_spread", |b| {
-        let mut book = OrderBook::new();
-        gen_orders_spread(&mut book, Side::Ask, 0, 100, 95, 105);
+        let mut initial_book = OrderBook::new();
+        gen_orders_spread(&mut initial_book, Side::Ask, 0, 100, 95, 105);
         b.iter(|| {
-            let _fills = book.execute_market_order(Side::Bid, 100).unwrap();
+            let mut book = initial_book.clone();
+            let fills = book.execute_market_order(Side::Bid, 100).unwrap();
+            black_box(&fills);
         });
     });
 
     group.bench_function("match_1000_orders_spread", |b| {
-        let mut book = OrderBook::new();
-        gen_orders_spread(&mut book, Side::Ask, 0, 1000, 95, 110);
+        let mut initial_book = OrderBook::new();
+        gen_orders_spread(&mut initial_book, Side::Ask, 0, 1000, 95, 110);
         b.iter(|| {
-            let _fills = book.execute_market_order(Side::Bid, 1000).unwrap();
+            let mut book = initial_book.clone();
+            let fills = book.execute_market_order(Side::Bid, 1000).unwrap();
+            black_box(&fills);
         });
     });
 
@@ -105,37 +109,51 @@ fn bench_market_execution(c: &mut Criterion) {
 fn bench_order_cancel(c: &mut Criterion) {
     let mut group = c.benchmark_group("order_cancel");
 
+    const N: usize = 10_000;
+    const COUNT: usize = 1000;
+    const STEP: usize = 9967; // coprime to 10_000
+
+    fn generate_unique_ids() -> [usize; COUNT] {
+        let mut ids = [0; COUNT];
+        let start = 0;
+        for i in 0..COUNT {
+            ids[i] = (start + i * STEP) % N;
+        }
+        ids
+    }
+
+    let unique_ids = generate_unique_ids();
+
     group.bench_function("cancel_sequential_in_large_book", |b| {
-        let mut book = OrderBook::new();
-        gen_orders(&mut book, Side::Bid, 0, 50_000, 100);
-
-        let ids: Vec<OrderId> = (0..50_000).map(OrderId).collect();
-
-        let mut cancel_index = 0;
+        let mut initial_book = OrderBook::new();
+        gen_orders(&mut initial_book, Side::Bid, 0, 10_000, 100);
 
         b.iter(|| {
-            // Cycle through order IDs deterministically
-            let id = ids[cancel_index % ids.len()];
-            cancel_index += 1;
+            let mut book = initial_book.clone();
 
-            let _ = book.cancel_order(id);
+            // Cancel a batch of orders per iteration deterministically
+            for id in unique_ids {
+                let result = book.cancel_order(OrderId(id as u64)).unwrap();
+                black_box(result);
+            }
+
+            black_box(&book);
         });
     });
 
     group.bench_function("cancel_spread_in_large_book", |b| {
-        let mut book = OrderBook::new();
-        gen_orders_spread(&mut book, Side::Bid, 0, 50_000, 90, 110);
-
-        let ids: Vec<OrderId> = (0..50_000).map(OrderId).collect();
-
-        let mut cancel_index = 0;
+        let mut initial_book = OrderBook::new();
+        gen_orders_spread(&mut initial_book, Side::Bid, 0, 10_000, 90, 110);
 
         b.iter(|| {
-            // Cycle through order IDs deterministically
-            let id = ids[cancel_index % ids.len()];
-            cancel_index += 1;
+            let mut book = initial_book.clone();
 
-            let _ = book.cancel_order(id);
+            for id in unique_ids {
+                let result = book.cancel_order(OrderId(id as u64)).unwrap();
+                black_box(result);
+            }
+
+            black_box(&book);
         });
     });
 
@@ -178,17 +196,17 @@ fn bench_stress(c: &mut Criterion) {
 
             // Insert all limit orders
             for &(side, price, order_id) in &limit_orders {
-                book.execute_limit_order(side, order_id, price, 1).unwrap();
+                black_box(book.execute_limit_order(side, order_id, price, 1).unwrap());
             }
 
             // Cancel subset of orders deterministically
             for &order_id in &cancel_orders {
-                let _ = book.cancel_order(order_id);
+                black_box(book.cancel_order(order_id).unwrap())
             }
 
             // Execute all market orders
             for &(side, qty) in &market_orders {
-                let _ = book.execute_market_order(side, qty);
+                black_box(book.execute_market_order(side, qty).unwrap());
             }
 
             black_box(&book);
