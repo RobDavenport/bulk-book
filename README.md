@@ -32,12 +32,12 @@ The linked-list approach for individual price levels was chosen for a few reason
 - This works well for the Slow & Thick Market Case
 
 BTree Map was selected to store each price level linked-list for these reasons:
-- Efficient insertion, lookup, and deletion of random price levels.
-- Fast lookup for first and last prices (ie, best bid, and best ask)
+- Efficient insertion, lookup, and deletion of random price levels, for limit placement and cancels.
+- Fast lookup for first and last prices (ie, best bid, and best ask) for order matching.
 - This works well for the Fast & Thin Market case
 
 This combination of factors mean we can achieve:
-- Constant time canceling of orders via OrderId lookup, without iterating the whole level.
+- Constant time canceling of orders via OrderId lookup, without iterating the whole book or entire price level arrays.
 - Efficient appending of new orders via fast Price Level lookups.
 - Efficient order matching iterating through the top-of-book.
 
