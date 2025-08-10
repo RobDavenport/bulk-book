@@ -46,10 +46,11 @@ fn bench_limit_insert(c: &mut Criterion) {
 
     // single-price warm insert
     group.bench_function("insert_into_warm_book", |b| {
-        let mut book = OrderBook::new();
-        gen_orders(&mut book, Side::Bid, 0, 10_000, 100);
+        let mut initial_book = OrderBook::new();
+        gen_orders(&mut initial_book, Side::Bid, 0, 10_000, 100);
         b.iter(|| {
-            gen_orders(&mut book, Side::Bid, 10_000, 1_000, 101);
+            let mut book = initial_book.clone();
+            gen_orders(&mut book, Side::Bid, 10_000, 1_000, 100);
             black_box(&book);
         });
     });
@@ -65,9 +66,10 @@ fn bench_limit_insert(c: &mut Criterion) {
 
     // spread prices warm insert
     group.bench_function("insert_spread_into_warm_book", |b| {
-        let mut book = OrderBook::new();
-        gen_orders_spread(&mut book, Side::Bid, 0, 10_000, 90, 110);
+        let mut initial_book = OrderBook::new();
+        gen_orders_spread(&mut initial_book, Side::Bid, 0, 10_000, 90, 110);
         b.iter(|| {
+            let mut book = initial_book.clone();
             gen_orders_spread(&mut book, Side::Bid, 10_000, 1_000, 90, 110);
             black_box(&book);
         });
@@ -106,6 +108,23 @@ fn bench_order_cancel(c: &mut Criterion) {
     group.bench_function("cancel_sequential_in_large_book", |b| {
         let mut book = OrderBook::new();
         gen_orders(&mut book, Side::Bid, 0, 50_000, 100);
+
+        let ids: Vec<OrderId> = (0..50_000).map(OrderId).collect();
+
+        let mut cancel_index = 0;
+
+        b.iter(|| {
+            // Cycle through order IDs deterministically
+            let id = ids[cancel_index % ids.len()];
+            cancel_index += 1;
+
+            let _ = book.cancel_order(id);
+        });
+    });
+
+    group.bench_function("cancel_spread_in_large_book", |b| {
+        let mut book = OrderBook::new();
+        gen_orders_spread(&mut book, Side::Bid, 0, 50_000, 90, 110);
 
         let ids: Vec<OrderId> = (0..50_000).map(OrderId).collect();
 
@@ -172,7 +191,7 @@ fn bench_stress(c: &mut Criterion) {
                 let _ = book.execute_market_order(side, qty);
             }
 
-            black_box(&book); // Prevent optimization
+            black_box(&book);
         });
     });
 

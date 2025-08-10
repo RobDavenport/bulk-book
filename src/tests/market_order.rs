@@ -123,6 +123,56 @@ fn test_market_buy_less_than_liquidity() {
 }
 
 #[test]
+fn test_market_buy_equal_liquidity() {
+    let mut book = OrderBook::new();
+
+    book.execute_limit_order(Side::Ask, OrderId(1), 100, 10)
+        .unwrap();
+
+    let result = book.execute_market_order(Side::Bid, 10).unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[0],
+        Fill {
+            price: 100,
+            quantity: 10
+        }
+    );
+
+    // Limit Book should be empty
+    assert_eq!(book.asks.len(), 0);
+    assert_eq!(book.bids.len(), 0);
+    assert_eq!(book.index_map.len(), 0);
+    assert_eq!(book.orders.len(), 0);
+}
+
+#[test]
+fn test_market_sell_equal_liquidity() {
+    let mut book = OrderBook::new();
+
+    book.execute_limit_order(Side::Bid, OrderId(1), 100, 10)
+        .unwrap();
+
+    let result = book.execute_market_order(Side::Ask, 10).unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[0],
+        Fill {
+            price: 100,
+            quantity: 10
+        }
+    );
+
+    // Limit Book should be empty
+    assert_eq!(book.asks.len(), 0);
+    assert_eq!(book.bids.len(), 0);
+    assert_eq!(book.index_map.len(), 0);
+    assert_eq!(book.orders.len(), 0);
+}
+
+#[test]
 fn test_market_sell_less_than_liquidity() {
     let mut book = OrderBook::new();
 
@@ -158,6 +208,228 @@ fn test_market_sell_less_than_liquidity() {
             next: None
         }
     );
+}
+
+#[test]
+fn test_market_buy_multiple_same_price() {
+    let mut book = OrderBook::new();
+
+    book.execute_limit_order(Side::Ask, OrderId(1), 100, 1)
+        .unwrap();
+    book.execute_limit_order(Side::Ask, OrderId(2), 100, 2)
+        .unwrap();
+    book.execute_limit_order(Side::Ask, OrderId(3), 100, 3)
+        .unwrap();
+    assert!(book.bids.is_empty());
+    assert_eq!(book.asks.len(), 1);
+
+    // Get indices before they get removed
+    let first = book.index_map.get(&OrderId(1)).unwrap().order_index;
+    let second = book.index_map.get(&OrderId(2)).unwrap().order_index;
+    let third = book.index_map.get(&OrderId(3)).unwrap().order_index;
+
+    // Should have 3 fills
+    let result = book.execute_market_order(Side::Bid, 6).unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(
+        result[0],
+        Fill {
+            price: 100,
+            quantity: 1
+        }
+    );
+    assert_eq!(
+        result[1],
+        Fill {
+            price: 100,
+            quantity: 2
+        }
+    );
+    assert_eq!(
+        result[2],
+        Fill {
+            price: 100,
+            quantity: 3
+        }
+    );
+
+    // Check book is still correct
+    let first_node = book.orders.get(first);
+    let second_node = book.orders.get(second);
+    let third_node = book.orders.get(third);
+
+    let price_level = book.asks.get(&100);
+    assert_eq!(price_level, None);
+
+    assert_eq!(first_node, None);
+    assert_eq!(second_node, None);
+    assert_eq!(third_node, None);
+}
+
+#[test]
+fn test_market_sell_multiple_same_price() {
+    let mut book = OrderBook::new();
+
+    book.execute_limit_order(Side::Bid, OrderId(1), 100, 1)
+        .unwrap();
+    book.execute_limit_order(Side::Bid, OrderId(2), 100, 2)
+        .unwrap();
+    book.execute_limit_order(Side::Bid, OrderId(3), 100, 3)
+        .unwrap();
+    assert!(book.asks.is_empty());
+    assert_eq!(book.bids.len(), 1);
+
+    // Get indices before they get removed
+    let first = book.index_map.get(&OrderId(1)).unwrap().order_index;
+    let second = book.index_map.get(&OrderId(2)).unwrap().order_index;
+    let third = book.index_map.get(&OrderId(3)).unwrap().order_index;
+
+    // Should have 3 fills
+    let result = book.execute_market_order(Side::Ask, 6).unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(
+        result[0],
+        Fill {
+            price: 100,
+            quantity: 1
+        }
+    );
+    assert_eq!(
+        result[1],
+        Fill {
+            price: 100,
+            quantity: 2
+        }
+    );
+    assert_eq!(
+        result[2],
+        Fill {
+            price: 100,
+            quantity: 3
+        }
+    );
+
+    // Check book is still correct
+    let first_node = book.orders.get(first);
+    let second_node = book.orders.get(second);
+    let third_node = book.orders.get(third);
+
+    let price_level = book.bids.get(&100);
+    assert_eq!(price_level, None);
+
+    assert_eq!(first_node, None);
+    assert_eq!(second_node, None);
+    assert_eq!(third_node, None);
+}
+
+#[test]
+fn test_market_buy_sweep_same_price() {
+    let mut book = OrderBook::new();
+
+    book.execute_limit_order(Side::Ask, OrderId(1), 100, 1)
+        .unwrap();
+    book.execute_limit_order(Side::Ask, OrderId(2), 100, 2)
+        .unwrap();
+    book.execute_limit_order(Side::Ask, OrderId(3), 100, 3)
+        .unwrap();
+    assert!(book.bids.is_empty());
+    assert_eq!(book.asks.len(), 1);
+
+    // Get indices before they get removed
+    let first = book.index_map.get(&OrderId(1)).unwrap().order_index;
+    let second = book.index_map.get(&OrderId(2)).unwrap().order_index;
+    let third = book.index_map.get(&OrderId(3)).unwrap().order_index;
+
+    // Should have two fills
+    let result = book.execute_market_order(Side::Bid, 6).unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(
+        result[0],
+        Fill {
+            price: 100,
+            quantity: 1
+        }
+    );
+    assert_eq!(
+        result[1],
+        Fill {
+            price: 100,
+            quantity: 2
+        }
+    );
+    assert_eq!(
+        result[2],
+        Fill {
+            price: 100,
+            quantity: 3
+        }
+    );
+
+    // Check book is still correct
+    let first_node = book.orders.get(first);
+    let second_node = book.orders.get(second);
+    let third_node = book.orders.get(third);
+
+    let price_level = book.asks.get(&100);
+    assert_eq!(price_level, None);
+    assert_eq!(first_node, None);
+    assert_eq!(second_node, None);
+    assert_eq!(third_node, None);
+}
+
+#[test]
+fn test_market_sell_sweep_same_price() {
+    let mut book = OrderBook::new();
+
+    book.execute_limit_order(Side::Bid, OrderId(1), 100, 1)
+        .unwrap();
+    book.execute_limit_order(Side::Bid, OrderId(2), 100, 2)
+        .unwrap();
+    book.execute_limit_order(Side::Bid, OrderId(3), 100, 3)
+        .unwrap();
+    assert!(book.asks.is_empty());
+    assert_eq!(book.bids.len(), 1);
+
+    // Get indices before they get removed
+    let first = book.index_map.get(&OrderId(1)).unwrap().order_index;
+    let second = book.index_map.get(&OrderId(2)).unwrap().order_index;
+    let third = book.index_map.get(&OrderId(3)).unwrap().order_index;
+
+    // Should have two fills
+    let result = book.execute_market_order(Side::Ask, 6).unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(
+        result[0],
+        Fill {
+            price: 100,
+            quantity: 1
+        }
+    );
+    assert_eq!(
+        result[1],
+        Fill {
+            price: 100,
+            quantity: 2
+        }
+    );
+    assert_eq!(
+        result[2],
+        Fill {
+            price: 100,
+            quantity: 3
+        }
+    );
+
+    // Check book is still correct
+    let first_node = book.orders.get(first);
+    let second_node = book.orders.get(second);
+    let third_node = book.orders.get(third);
+
+    let price_level = book.bids.get(&100);
+    assert_eq!(price_level, None);
+    assert_eq!(first_node, None);
+    assert_eq!(second_node, None);
+    assert_eq!(third_node, None);
 }
 
 #[test]
@@ -200,6 +472,16 @@ fn test_market_buy_complex_fills_same_price() {
     let first_node = book.orders.get(first);
     let second_node = book.orders.get(second);
     let third_node = book.orders.get(third);
+
+    let price_level = book.asks.get(&100).unwrap();
+    assert_eq!(
+        *price_level,
+        PriceLevel {
+            head: second,
+            tail: third,
+            order_count: 2
+        }
+    );
 
     assert_eq!(first_node, None);
     assert_eq!(
@@ -264,6 +546,16 @@ fn test_market_sell_complex_fills_same_price() {
     let first_node = book.orders.get(first);
     let second_node = book.orders.get(second);
     let third_node = book.orders.get(third);
+
+    let price_level = book.bids.get(&100).unwrap();
+    assert_eq!(
+        *price_level,
+        PriceLevel {
+            head: second,
+            tail: third,
+            order_count: 2
+        }
+    );
 
     assert_eq!(first_node, None);
     assert_eq!(

@@ -31,7 +31,7 @@ impl PriceLevel {
 
 type BookSideType = BTreeMap<Price, PriceLevel>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OrderBook {
     pub bids: BookSideType,
     pub asks: BookSideType,
@@ -45,7 +45,7 @@ impl Default for OrderBook {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndexMapEntry {
     pub order_index: usize,
     pub price: Price,
@@ -149,16 +149,16 @@ impl OrderBook {
                 let book = &mut self.asks;
                 MarketOrderHelper {
                     book,
-                    next_fn: Self::next_bid,
-                    next_mut_fn: Self::next_bid_mut,
+                    next_fn: Self::next_ask,
+                    next_mut_fn: Self::next_ask_mut,
                 }
             }
             Side::Ask => {
                 let book = &mut self.bids;
                 MarketOrderHelper {
                     book,
-                    next_fn: Self::next_ask,
-                    next_mut_fn: Self::next_ask_mut,
+                    next_fn: Self::next_bid,
+                    next_mut_fn: Self::next_bid_mut,
                 }
             }
         };
@@ -182,8 +182,10 @@ impl OrderBook {
                     // Remove the resting order from id lookup
                     self.index_map.remove(&node.order_id);
 
-                    // Remove the resting order from the price level
+                    // Remove the node from memory
                     self.orders.remove(top_level.head);
+
+                    // Remove the resting order from the price level
                     if let Some(next) = node.next {
                         // We need to update the pointer to the "next" order
                         let Some(top_level_ref) = next_mut_fn(book) else {
@@ -193,7 +195,10 @@ impl OrderBook {
                             next_order.previous = None;
                         }
                         top_level.head = next;
-                        top_level_ref.head = next;
+                        top_level.order_count -= 1;
+
+                        // Sync the local and stored values.
+                        *top_level_ref = top_level.clone();
                     } else {
                         // No orders remain, just delete this level entirely
                         book.remove(&price);
