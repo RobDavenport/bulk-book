@@ -114,11 +114,11 @@ impl OrderBook {
     }
 
     fn next_bid(bids: &BookSideType) -> Option<(Price, PriceLevel)> {
-        bids.first_key_value().map(|(k, v)| (*k, v.clone()))
+        bids.last_key_value().map(|(k, v)| (*k, v.clone()))
     }
 
     fn next_ask(asks: &BookSideType) -> Option<(Price, PriceLevel)> {
-        asks.last_key_value().map(|(k, v)| (*k, v.clone()))
+        asks.first_key_value().map(|(k, v)| (*k, v.clone()))
     }
 
     fn next_bid_mut(bids: &mut BookSideType) -> Option<&mut PriceLevel> {
@@ -206,13 +206,13 @@ impl OrderBook {
                     }
                 } else {
                     // This resting order will be partially consumed
-                    let Some(top_order_ref) = self.orders.get_mut(top_level.head) else {
+                    let Some(top_node_ref) = self.orders.get_mut(top_level.head) else {
                         return Err(MarketOrderError::InternalError);
                     };
 
                     // Push remaining quantity
                     fills.push(Fill { price, quantity });
-                    top_order_ref.quantity -= quantity;
+                    top_node_ref.quantity -= quantity;
                     quantity = 0;
                     break;
                 }
